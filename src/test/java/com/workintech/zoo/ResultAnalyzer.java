@@ -1,66 +1,88 @@
 package com.workintech.zoo;
 
+import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.json.JSONObject;
 import org.junit.jupiter.api.extension.AfterAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.TestWatcher;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class ResultAnalyzer implements TestWatcher, AfterAllCallback {
 
-    private List<String> results = new ArrayList<>();
+    private List<TestResultStatus> testResultsStatus = new ArrayList<>();
 
-    // 🔥 BURAYI DEĞİŞTİR
-    private static final String taskId = "308111"; // ← senin projenin ID'si
+    private static final String taskId = "308111";
+
+    private enum TestResultStatus {
+        SUCCESSFUL, ABORTED, FAILED, DISABLED
+    }
 
     @Override
     public void testDisabled(ExtensionContext context, Optional<String> reason) {
-        results.add("DISABLED");
+        testResultsStatus.add(TestResultStatus.DISABLED);
     }
 
     @Override
     public void testSuccessful(ExtensionContext context) {
-        results.add("SUCCESSFUL");
+        testResultsStatus.add(TestResultStatus.SUCCESSFUL);
     }
 
     @Override
     public void testAborted(ExtensionContext context, Throwable cause) {
-        results.add("ABORTED");
+        testResultsStatus.add(TestResultStatus.ABORTED);
     }
 
     @Override
     public void testFailed(ExtensionContext context, Throwable cause) {
-        results.add("FAILED");
+        testResultsStatus.add(TestResultStatus.FAILED);
     }
 
     @Override
-    public void afterAll(ExtensionContext context) {
+    public void afterAll(ExtensionContext context) throws Exception {
+        Map<TestResultStatus, Long> summary = testResultsStatus.stream()
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
 
-        long passed = results.stream().filter(r -> r.equals("SUCCESSFUL")).count();
-        long failed = results.stream().filter(r -> r.equals("FAILED")).count();
+        long success = summary.get(TestResultStatus.SUCCESSFUL) != null
+                ? summary.get(TestResultStatus.SUCCESSFUL) : 0;
 
+        long failure = summary.get(TestResultStatus.FAILED) != null
+                ? summary.get(TestResultStatus.FAILED) : 0;
+
+        double score = (success + failure) == 0 ? 0 : (double) success / (success + failure);
+        String userId = "308111";
+
+        JSONObject json = new JSONObject();
+        json.put("score", score);
+        json.put("taskId", taskId);
+        json.put("userId", userId);
+
+        sendTestResult(json.toString());
+    }
+
+    private void sendTestResult(String result) throws IOException {
+        CloseableHttpClient httpClient = HttpClientBuilder.create().build();
         try {
-            JSONObject json = new JSONObject();
-            json.put("taskId", taskId);
-            json.put("successCount", passed);
-            json.put("failureCount", failed);
-
-            HttpPost request = new HttpPost("https://nextgen.workintech.com/api/results");
-
-            StringEntity params = new StringEntity(json.toString());
+            HttpPost request = new HttpPost("https://coursey-gpt-backend.herokuapp.com/nextgen/taskLog/saveJavaTasks");
+            StringEntity params = new StringEntity(result);
             request.addHeader("content-type", "application/json");
             request.setEntity(params);
-
-            HttpClientBuilder.create().build().execute(request);
-
-        } catch (Exception e) {
-            System.out.println("Result gönderilemedi");
+            HttpResponse response = httpClient.execute(request);
+            System.out.println(response.getStatusLine());
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        } finally {
+            httpClient.close();
         }
     }
 }
